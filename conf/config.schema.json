@@ -27,7 +27,7 @@
       "description": "The amount of time a password reset token remains valid for",
       "type": "string",
       "isTimeMs": true,
-      "default": "3h"
+      "default": "24h"
     },
     "inviteTokenLifespan": {
       "description": "The amount of time an invite password reset token remains valid for",
