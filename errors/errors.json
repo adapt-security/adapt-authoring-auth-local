@@ -14,6 +14,10 @@
     "description": "Specified account is not authenticated with local auth",
     "statusCode": 400
   },
+  "BLACKLISTED_PASSWORD_VALUE": {
+    "description": "Password contains a blacklisted value",
+    "statusCode": 401
+  },
   "INCORRECT_PASSWORD": {
     "description": "Provided password does not match that stored",
     "statusCode": 401

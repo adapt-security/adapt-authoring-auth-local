@@ -74,6 +74,11 @@
       "_adapt": {
         "isPublic": true
       }
+    },
+    "blacklistedPasswordValues": {
+      "description": "Values which cannot be used in passwords",
+      "type": "array",
+      "default": []
     }
   }
 }
