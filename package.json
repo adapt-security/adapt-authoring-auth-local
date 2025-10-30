@@ -18,7 +18,6 @@
     "adapt-authoring-sessions": "github:adapt-security/adapt-authoring-sessions"
   },
   "devDependencies": {
-    "eslint": "^9.11.0",
     "standard": "^17.1.0",
     "@semantic-release/commit-analyzer": "^9.0.2",
     "@semantic-release/git": "^10.0.1",
