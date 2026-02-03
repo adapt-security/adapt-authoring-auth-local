@@ -1,6 +1,6 @@
 {
   "name": "adapt-authoring-auth-local",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Module which implements username/password (local) authentication",
   "homepage": "https://github.com/adapt-security/adapt-authoring-auth-local",
   "license": "GPL-3.0",
