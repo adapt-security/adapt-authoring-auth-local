@@ -505,10 +505,7 @@ describe('LocalAuthModule', () => {
       const user = {
         isPermLocked: false,
         isTempLocked: true,
-        // NOTE: handleLockStatus multiplies temporaryLockDuration by 1000, which
-        // appears to be a bug if the config value is already in ms (isTimeMs: true).
-        // We set lastFailedLoginAttempt to now so the lock is still active with
-        // the doubled value.
+        // NOTE: lastFailedLoginAttempt is set to now so the lock is still active.
         lastFailedLoginAttempt: new Date().toISOString()
       }
       await assert.rejects(
@@ -649,9 +646,7 @@ describe('LocalAuthModule', () => {
       assert.ok(updateCalls.length > 0)
     })
 
-    // TODO: Bug - setUserEnabled references user.failedAttempts instead of
-    // user.failedLoginAttempts when disabling. See BUGS.md.
-    it('should preserve failedLoginAttempts when disabling a user', { todo: 'references user.failedAttempts instead of user.failedLoginAttempts' }, async () => {
+    it('should preserve failedLoginAttempts when disabling a user', async () => {
       const user = { _id: 'user-1', failedLoginAttempts: 7 }
       await mod.setUserEnabled(user, false)
       const lastUpdate = updateCalls[updateCalls.length - 1]

@@ -374,11 +374,7 @@ describe('PasswordUtils', () => {
       await assert.doesNotReject(() => PasswordUtils.validate('anything1'))
     })
 
-    // TODO: Bug - blacklist check uses .some() instead of .every()
-    // With multiple blacklisted values, a password containing one blacklisted
-    // value passes if another blacklisted value is absent.
-    // See BUGS.md and PasswordUtils.js line 67.
-    it('should throw when password contains any blacklisted value (multiple entries)', { todo: 'blacklist check uses .some() instead of .every()' }, async () => {
+    it('should throw when password contains any blacklisted value (multiple entries)', async () => {
       authlocalConfig.blacklistedPasswordValues = ['password', 'qwerty']
       await assert.rejects(
         () => PasswordUtils.validate('password123'),
@@ -593,10 +589,7 @@ describe('PasswordUtils', () => {
       )
     })
 
-    // TODO: Bug - validateReset uses token.email instead of tokenData.email
-    // in the NOT_FOUND error data. Since token is a string, token.email is
-    // undefined. See PasswordUtils.js line 167.
-    it('should include correct email in NOT_FOUND error when user is missing', { todo: 'uses token.email (string) instead of tokenData.email' }, async () => {
+    it('should include correct email in NOT_FOUND error when user is missing', async () => {
       mockPasswordResetsStore.push({
         token: 'orphan-token',
         email: 'orphan@example.com',
