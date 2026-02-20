@@ -1,4 +1,4 @@
-import { describe, it, before, beforeEach, after, mock } from 'node:test'
+import { describe, it, before, beforeEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import { promisify } from 'util'
@@ -108,6 +108,16 @@ describe('PasswordUtils', () => {
       const result = await PasswordUtils.getConfig('saltRounds', 'minPasswordLength')
       assert.deepEqual(result, { saltRounds: 10, minPasswordLength: 8 })
     })
+
+    it('should return undefined for an unknown config key', async () => {
+      const result = await PasswordUtils.getConfig('nonExistentKey')
+      assert.equal(result, undefined)
+    })
+
+    it('should return an object with undefined values for unknown keys in multi-key mode', async () => {
+      const result = await PasswordUtils.getConfig('saltRounds', 'unknownKey')
+      assert.deepEqual(result, { saltRounds: 10, unknownKey: undefined })
+    })
   })
 
   describe('#compare()', () => {
@@ -149,6 +159,41 @@ describe('PasswordUtils', () => {
         (err) => err.name === 'INVALID_LOGIN_DETAILS'
       )
     })
+
+    it('should throw when plainPassword is null', async () => {
+      await assert.rejects(
+        () => PasswordUtils.compare(null, hash),
+        (err) => err.name === 'INVALID_LOGIN_DETAILS'
+      )
+    })
+
+    it('should throw when hash is null', async () => {
+      await assert.rejects(
+        () => PasswordUtils.compare('password', null),
+        (err) => err.name === 'INVALID_LOGIN_DETAILS'
+      )
+    })
+
+    it('should set INCORRECT_PASSWORD as nested error data on mismatch', async () => {
+      await assert.rejects(
+        () => PasswordUtils.compare('wrongpassword', hash),
+        (err) => {
+          assert.equal(err.data.error.name, 'INCORRECT_PASSWORD')
+          return true
+        }
+      )
+    })
+
+    it('should set INVALID_PARAMS as nested error data when params missing', async () => {
+      await assert.rejects(
+        () => PasswordUtils.compare('', ''),
+        (err) => {
+          assert.equal(err.data.error.name, 'INVALID_PARAMS')
+          assert.deepEqual(err.data.error.data.params, ['plainPassword', 'hash'])
+          return true
+        }
+      )
+    })
   })
 
   describe('#validate()', () => {
@@ -175,11 +220,49 @@ describe('PasswordUtils', () => {
       )
     })
 
+    it('should throw when password is null', async () => {
+      await assert.rejects(
+        () => PasswordUtils.validate(null),
+        (err) => err.name === 'INVALID_PARAMS'
+      )
+    })
+
+    it('should throw when password is undefined', async () => {
+      await assert.rejects(
+        () => PasswordUtils.validate(undefined),
+        (err) => err.name === 'INVALID_PARAMS'
+      )
+    })
+
+    it('should throw when password is a boolean', async () => {
+      await assert.rejects(
+        () => PasswordUtils.validate(true),
+        (err) => err.name === 'INVALID_PARAMS'
+      )
+    })
+
     it('should throw when password is too short', async () => {
       await assert.rejects(
         () => PasswordUtils.validate('short'),
         (err) => err.name === 'INVALID_PASSWORD'
       )
+    })
+
+    it('should include minimum length in INVALID_PASSWORD_LENGTH error data', async () => {
+      await assert.rejects(
+        () => PasswordUtils.validate('short'),
+        (err) => {
+          assert.equal(err.name, 'INVALID_PASSWORD')
+          const lengthErr = err.data.errors.find(e => e.name === 'INVALID_PASSWORD_LENGTH')
+          assert.ok(lengthErr)
+          assert.equal(lengthErr.data.length, 8)
+          return true
+        }
+      )
+    })
+
+    it('should accept a password of exactly minimum length', async () => {
+      await assert.doesNotReject(() => PasswordUtils.validate('12345678'))
     })
 
     it('should throw when number is required but missing', async () => {
@@ -232,11 +315,11 @@ describe('PasswordUtils', () => {
       )
     })
 
-    it('should accept a password with special character when required', async () => {
+    it('should accept each recognized special character', async () => {
       authlocalConfig.passwordMustHaveSpecial = true
       const specials = ['#', '?', '!', '@', '$', '%', '^', '&', '*', '-']
       for (const ch of specials) {
-        await assert.doesNotReject(() => PasswordUtils.validate(`abcdefg${ch}`))
+        await assert.doesNotReject(() => PasswordUtils.validate('abcdefg' + ch))
       }
     })
 
@@ -262,7 +345,12 @@ describe('PasswordUtils', () => {
       await assert.doesNotReject(() => PasswordUtils.validate('Abcdef1!'))
     })
 
-    // NOTE: The blacklist check in the source has a bug — it uses .some() where
+    it('should accept an empty string when minPasswordLength is zero', async () => {
+      authlocalConfig.minPasswordLength = 0
+      await assert.doesNotReject(() => PasswordUtils.validate(''))
+    })
+
+    // NOTE: The blacklist check in the source has a bug -- it uses .some() where
     // it should use .every(). This means a password containing a blacklisted
     // value can still pass if there are other blacklisted values it doesn't
     // contain. The test below documents the expected (correct) behaviour.
@@ -281,10 +369,15 @@ describe('PasswordUtils', () => {
       await assert.doesNotReject(() => PasswordUtils.validate('securevalue'))
     })
 
-    // BUG: The blacklist check uses .some(p => !(password.includes(p))) where
-    // it should use .every(). With multiple blacklisted values, a password
-    // containing one blacklisted value passes if another blacklisted value is
-    // absent. See PasswordUtils.js line 67.
+    it('should handle an empty blacklist array', async () => {
+      authlocalConfig.blacklistedPasswordValues = []
+      await assert.doesNotReject(() => PasswordUtils.validate('anything1'))
+    })
+
+    // TODO: Bug - blacklist check uses .some() instead of .every()
+    // With multiple blacklisted values, a password containing one blacklisted
+    // value passes if another blacklisted value is absent.
+    // See BUGS.md and PasswordUtils.js line 67.
     it('should throw when password contains any blacklisted value (multiple entries)', { todo: 'blacklist check uses .some() instead of .every()' }, async () => {
       authlocalConfig.blacklistedPasswordValues = ['password', 'qwerty']
       await assert.rejects(
@@ -315,10 +408,24 @@ describe('PasswordUtils', () => {
       )
     })
 
+    it('should throw when plainPassword is null', async () => {
+      await assert.rejects(
+        () => PasswordUtils.generate(null),
+        (err) => err.name === 'INVALID_PARAMS'
+      )
+    })
+
     it('should generate different hashes for the same password (salted)', async () => {
       const hash1 = await PasswordUtils.generate('samepassword')
       const hash2 = await PasswordUtils.generate('samepassword')
       assert.notEqual(hash1, hash2)
+    })
+
+    it('should generate a hash verifiable with bcrypt compare', async () => {
+      const password = 'verifyMe123'
+      const hash = await PasswordUtils.generate(password)
+      const isValid = await promisify(bcrypt.compare)(password, hash)
+      assert.equal(isValid, true)
     })
   })
 
@@ -339,6 +446,12 @@ describe('PasswordUtils', () => {
       const hex1 = await PasswordUtils.getRandomHex()
       const hex2 = await PasswordUtils.getRandomHex()
       assert.notEqual(hex1, hex2)
+    })
+
+    it('should handle a size of 1', async () => {
+      const hex = await PasswordUtils.getRandomHex(1)
+      assert.equal(hex.length, 2)
+      assert.ok(/^[0-9a-f]+$/.test(hex))
     })
   })
 
@@ -364,10 +477,30 @@ describe('PasswordUtils', () => {
       assert.ok(mockPasswordResetsStore[0].token)
     })
 
+    it('should set expiresAt to a future date based on lifespan', async () => {
+      mockUsersStore.push({ email: 'test@example.com', authType: 'local' })
+      const beforeTime = Date.now()
+      await PasswordUtils.createReset('test@example.com', 86400000)
+      const expiresAt = new Date(mockPasswordResetsStore[0].expiresAt).getTime()
+      assert.ok(expiresAt >= beforeTime + 86400000)
+      assert.ok(expiresAt <= Date.now() + 86400000)
+    })
+
     it('should throw when user is not found', async () => {
       await assert.rejects(
         () => PasswordUtils.createReset('noone@example.com', 86400000),
         (err) => err.name === 'NOT_FOUND'
+      )
+    })
+
+    it('should include user email as id in NOT_FOUND error data', async () => {
+      await assert.rejects(
+        () => PasswordUtils.createReset('noone@example.com', 86400000),
+        (err) => {
+          assert.equal(err.data.id, 'noone@example.com')
+          assert.equal(err.data.type, 'user')
+          return true
+        }
       )
     })
 
@@ -396,6 +529,10 @@ describe('PasswordUtils', () => {
       await PasswordUtils.deleteReset('abc123')
       assert.equal(mockPasswordResetsStore.length, 0)
     })
+
+    it('should not error when deleting a non-existent token', async () => {
+      await assert.doesNotReject(() => PasswordUtils.deleteReset('nonexistent'))
+    })
   })
 
   describe('#validateReset()', () => {
@@ -414,6 +551,13 @@ describe('PasswordUtils', () => {
     it('should throw when token is undefined', async () => {
       await assert.rejects(
         () => PasswordUtils.validateReset(undefined),
+        (err) => err.name === 'INVALID_PARAMS'
+      )
+    })
+
+    it('should throw when token is null', async () => {
+      await assert.rejects(
+        () => PasswordUtils.validateReset(null),
         (err) => err.name === 'INVALID_PARAMS'
       )
     })
@@ -449,6 +593,24 @@ describe('PasswordUtils', () => {
       )
     })
 
+    // TODO: Bug - validateReset uses token.email instead of tokenData.email
+    // in the NOT_FOUND error data. Since token is a string, token.email is
+    // undefined. See PasswordUtils.js line 167.
+    it('should include correct email in NOT_FOUND error when user is missing', { todo: 'uses token.email (string) instead of tokenData.email' }, async () => {
+      mockPasswordResetsStore.push({
+        token: 'orphan-token',
+        email: 'orphan@example.com',
+        expiresAt: new Date(Date.now() + 86400000).toISOString()
+      })
+      await assert.rejects(
+        () => PasswordUtils.validateReset('orphan-token'),
+        (err) => {
+          assert.equal(err.data.id, 'orphan@example.com')
+          return true
+        }
+      )
+    })
+
     it('should return token data for a valid, non-expired token', async () => {
       const tokenData = {
         token: 'valid-token',
@@ -460,6 +622,17 @@ describe('PasswordUtils', () => {
       const result = await PasswordUtils.validateReset('valid-token')
       assert.equal(result.token, 'valid-token')
       assert.equal(result.email, 'test@example.com')
+    })
+
+    it('should accept a token that has not yet expired', async () => {
+      mockPasswordResetsStore.push({
+        token: 'edge-token',
+        email: 'test@example.com',
+        expiresAt: new Date(Date.now() + 1000).toISOString()
+      })
+      mockUsersStore.push({ email: 'test@example.com' })
+      const result = await PasswordUtils.validateReset('edge-token')
+      assert.equal(result.token, 'edge-token')
     })
   })
 })

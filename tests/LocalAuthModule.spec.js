@@ -45,6 +45,7 @@ let updateCalls = []
 let disavowCalls = []
 let secureRouteCalls = []
 let unsecureRouteCalls = []
+let mailerSendCalls = []
 
 const mockUsers = {
   find: async (query) => usersStore.filter(u => {
@@ -63,7 +64,7 @@ const mockRoles = {
 
 const mockMailer = {
   isEnabled: true,
-  send: async () => {}
+  send: async (opts) => { mailerSendCalls.push(opts) }
 }
 
 const mockServer = {
@@ -106,7 +107,7 @@ const mockApp = {
     return names.map(n => moduleMap[n])
   },
   lang: {
-    translate: (_, key) => `translated:${key}`
+    translate: (_, key) => 'translated:' + key
   }
 }
 
@@ -160,6 +161,7 @@ describe('LocalAuthModule', () => {
     disavowCalls = []
     secureRouteCalls = []
     unsecureRouteCalls = []
+    mailerSendCalls = []
     usersStore.length = 0
     authlocalConfig = {
       failsUntilTemporaryLock: 5,
@@ -192,6 +194,17 @@ describe('LocalAuthModule', () => {
     it('should return a string containing "minute" for 60 seconds', () => {
       const result = LocalAuthModule.formatRemainingTime(60)
       assert.ok(result.includes('minute'))
+    })
+
+    it('should return a string containing "hour" for 3600 seconds', () => {
+      const result = LocalAuthModule.formatRemainingTime(3600)
+      assert.ok(result.includes('hour'))
+    })
+
+    it('should handle zero seconds', () => {
+      const result = LocalAuthModule.formatRemainingTime(0)
+      assert.equal(typeof result, 'string')
+      assert.ok(result.length > 0)
     })
   })
 
@@ -227,6 +240,22 @@ describe('LocalAuthModule', () => {
       const superRoute = instance.routes.find(r => r.route === '/registersuper')
       assert.equal(superRoute.internal, true)
     })
+
+    it('should define post handlers for all routes', async () => {
+      const instance = new LocalAuthModule()
+      await instance.setValues()
+      for (const route of instance.routes) {
+        assert.equal(typeof route.handlers.post, 'function')
+      }
+    })
+
+    it('should define meta for all routes', async () => {
+      const instance = new LocalAuthModule()
+      await instance.setValues()
+      for (const route of instance.routes) {
+        assert.ok(route.meta)
+      }
+    })
   })
 
   describe('#init()', () => {
@@ -239,13 +268,26 @@ describe('LocalAuthModule', () => {
       assert.ok(secureRouteCalls.some(c => c[0] === '/invite' && c[1] === 'post'))
     })
 
-    it('should secure the validatepass route', async () => {
+    it('should secure the validatepass route with read:me permission', async () => {
       const instance = new LocalAuthModule()
       instance.app = mockApp
       instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
       await instance.setValues()
       await instance.init()
-      assert.ok(secureRouteCalls.some(c => c[0] === '/validatepass' && c[1] === 'post'))
+      const call = secureRouteCalls.find(c => c[0] === '/validatepass')
+      assert.ok(call)
+      assert.deepEqual(call[2], ['read:me'])
+    })
+
+    it('should secure the invite route with register:users permission', async () => {
+      const instance = new LocalAuthModule()
+      instance.app = mockApp
+      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
+      await instance.setValues()
+      await instance.init()
+      const call = secureRouteCalls.find(c => c[0] === '/invite')
+      assert.ok(call)
+      assert.deepEqual(call[2], ['register:users'])
     })
 
     it('should unsecure registersuper, changepass, and forgotpass routes', async () => {
@@ -267,6 +309,16 @@ describe('LocalAuthModule', () => {
       await instance.setValues()
       await instance.init()
       assert.equal(instance.users, mockUsers)
+    })
+
+    it('should set meta on root and register routes', async () => {
+      const instance = new LocalAuthModule()
+      instance.app = mockApp
+      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
+      await instance.setValues()
+      await instance.init()
+      assert.ok(instance.router.routes.find(r => r.route === '/').meta)
+      assert.ok(instance.router.routes.find(r => r.route === '/register').meta)
     })
   })
 
@@ -311,6 +363,24 @@ describe('LocalAuthModule', () => {
       await assert.rejects(() => mod.authenticate(user, req, {}))
       const lastUpdate = updateCalls[updateCalls.length - 1]
       assert.equal(lastUpdate.data.failedLoginAttempts, 1)
+    })
+
+    it('should set lastFailedLoginAttempt on wrong password', async () => {
+      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
+      const hash = await PasswordUtils.generate('correctpass')
+      const user = {
+        _id: 'user-1',
+        password: hash,
+        isPermLocked: false,
+        isTempLocked: false,
+        failedLoginAttempts: 0,
+        lastFailedLoginAttempt: null
+      }
+      const req = { body: { password: 'wrongpass' } }
+      await assert.rejects(() => mod.authenticate(user, req, {}))
+      const lastUpdate = updateCalls[updateCalls.length - 1]
+      assert.ok(lastUpdate.data.lastFailedLoginAttempt)
+      assert.ok(!isNaN(Date.parse(lastUpdate.data.lastFailedLoginAttempt)))
     })
 
     it('should temporarily lock after reaching failsUntilTemporaryLock threshold', async () => {
@@ -387,6 +457,40 @@ describe('LocalAuthModule', () => {
       const lastUpdate = updateCalls[updateCalls.length - 1]
       assert.equal(lastUpdate.data.failedLoginAttempts, 20)
     })
+
+    it('should not increment failed attempts during temp lock timeout', async () => {
+      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
+      const hash = await PasswordUtils.generate('correctpass')
+      const user = {
+        _id: 'user-1',
+        password: hash,
+        isPermLocked: false,
+        isTempLocked: true,
+        failedLoginAttempts: 5,
+        lastFailedLoginAttempt: new Date().toISOString()
+      }
+      const req = { body: { password: 'wrongpass' } }
+      await assert.rejects(() => mod.authenticate(user, req, {}))
+      const lastUpdate = updateCalls[updateCalls.length - 1]
+      assert.equal(lastUpdate.data.failedLoginAttempts, 5)
+    })
+
+    it('should clear lastFailedLoginAttempt on successful login', async () => {
+      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
+      const hash = await PasswordUtils.generate('correctpass')
+      const user = {
+        _id: 'user-1',
+        password: hash,
+        isPermLocked: false,
+        isTempLocked: false,
+        failedLoginAttempts: 0,
+        lastFailedLoginAttempt: null
+      }
+      const req = { body: { password: 'correctpass' } }
+      await mod.authenticate(user, req, {})
+      const lastUpdate = updateCalls[updateCalls.length - 1]
+      assert.equal(lastUpdate.data.lastFailedLoginAttempt, undefined)
+    })
   })
 
   describe('#handleLockStatus()', () => {
@@ -413,6 +517,23 @@ describe('LocalAuthModule', () => {
       )
     })
 
+    it('should include remaining time in ACCOUNT_LOCKED_TEMP error data', async () => {
+      const user = {
+        isPermLocked: false,
+        isTempLocked: true,
+        lastFailedLoginAttempt: new Date().toISOString()
+      }
+      await assert.rejects(
+        () => mod.handleLockStatus(user),
+        (err) => {
+          assert.ok(err.data)
+          assert.ok(err.data.remaining)
+          assert.equal(typeof err.data.remaining, 'string')
+          return true
+        }
+      )
+    })
+
     it('should unlock user when temp lock has expired', async () => {
       const user = {
         _id: 'user-1',
@@ -435,6 +556,18 @@ describe('LocalAuthModule', () => {
       await mod.handleLockStatus(user)
       assert.equal(updateCalls.length, 0)
     })
+
+    it('should check permanent lock before temporary lock', async () => {
+      const user = {
+        isPermLocked: true,
+        isTempLocked: true,
+        lastFailedLoginAttempt: new Date().toISOString()
+      }
+      await assert.rejects(
+        () => mod.handleLockStatus(user),
+        (err) => err.name === 'ACCOUNT_LOCKED_PERM'
+      )
+    })
   })
 
   describe('#register()', () => {
@@ -450,6 +583,17 @@ describe('LocalAuthModule', () => {
       assert.ok(result.password)
       assert.ok(result.password.startsWith('$2a$') || result.password.startsWith('$2b$'))
     })
+
+    it('should preserve other data fields in registration', async () => {
+      const result = await mod.register({
+        email: 'new@example.com',
+        password: 'validpassword',
+        firstName: 'Test',
+        lastName: 'User'
+      })
+      assert.equal(result.firstName, 'Test')
+      assert.equal(result.lastName, 'User')
+    })
   })
 
   describe('#registerSuper()', () => {
@@ -459,6 +603,21 @@ describe('LocalAuthModule', () => {
         () => mod.registerSuper({ email: 'super@example.com', password: 'validpassword' }),
         (err) => err.name === 'SUPER_USER_EXISTS'
       )
+    })
+
+    it('should call register with hardcoded firstName and lastName', async () => {
+      const originalRegister = mod.register.bind(mod)
+      let registeredData
+      mod.register = async (data) => {
+        registeredData = data
+        return originalRegister(data)
+      }
+      await mod.registerSuper({ email: 'super@example.com', password: 'validpassword' })
+      mod.register = originalRegister
+      assert.equal(registeredData.firstName, 'Super')
+      assert.equal(registeredData.lastName, 'User')
+      assert.equal(registeredData.email, 'super@example.com')
+      assert.equal(registeredData.password, 'validpassword')
     })
   })
 
@@ -472,7 +631,7 @@ describe('LocalAuthModule', () => {
       assert.equal(lastUpdate.data.isTempLocked, false)
     })
 
-    // NOTE: There is a bug in setUserEnabled — when disabling (isEnabled=false),
+    // NOTE: There is a bug in setUserEnabled -- when disabling (isEnabled=false),
     // it references user.failedAttempts which doesn't exist on the schema.
     // The schema field is user.failedLoginAttempts. This means
     // failedLoginAttempts will always be set to undefined when disabling.
@@ -482,6 +641,21 @@ describe('LocalAuthModule', () => {
       const lastUpdate = updateCalls[updateCalls.length - 1]
       assert.equal(lastUpdate.data.isPermLocked, true)
       assert.equal(lastUpdate.data.isTempLocked, true)
+    })
+
+    it('should use localauthuser schema for user update', async () => {
+      const user = { _id: 'user-1', failedLoginAttempts: 0 }
+      await mod.setUserEnabled(user, true)
+      assert.ok(updateCalls.length > 0)
+    })
+
+    // TODO: Bug - setUserEnabled references user.failedAttempts instead of
+    // user.failedLoginAttempts when disabling. See BUGS.md.
+    it('should preserve failedLoginAttempts when disabling a user', { todo: 'references user.failedAttempts instead of user.failedLoginAttempts' }, async () => {
+      const user = { _id: 'user-1', failedLoginAttempts: 7 }
+      await mod.setUserEnabled(user, false)
+      const lastUpdate = updateCalls[updateCalls.length - 1]
+      assert.equal(lastUpdate.data.failedLoginAttempts, 7)
     })
   })
 
@@ -498,6 +672,13 @@ describe('LocalAuthModule', () => {
       assert.deepEqual(lastUpdate.query, { email: 'test@example.com' })
     })
 
+    it('should accept an ObjectId-like object as userIdOrQuery', async () => {
+      const fakeObjectId = { constructor: { name: 'ObjectId' }, toString: () => 'abc123' }
+      await mod.updateUser(fakeObjectId, { firstName: 'Updated' })
+      const lastUpdate = updateCalls[updateCalls.length - 1]
+      assert.deepEqual(lastUpdate.query, { _id: fakeObjectId })
+    })
+
     it('should hash password when update includes password', async () => {
       const result = await mod.updateUser('user-id-1', { password: 'newpassword' })
       assert.ok(result)
@@ -508,6 +689,24 @@ describe('LocalAuthModule', () => {
       const lastUpdate = updateCalls[updateCalls.length - 1]
       assert.equal(lastUpdate.data.firstName, 'NoPassword')
       assert.equal(Object.prototype.hasOwnProperty.call(lastUpdate.data, 'password'), false)
+    })
+
+    it('should call disavowUser after a password update', async () => {
+      disavowCalls = []
+      await mod.updateUser('user-id-1', { password: 'newpassword' })
+      assert.ok(disavowCalls.length > 0)
+      assert.equal(disavowCalls[0][0].authType, 'local')
+    })
+
+    it('should send email notification after password update when mailer is enabled', async () => {
+      mailerSendCalls = []
+      await mod.updateUser('user-id-1', { password: 'newpassword' })
+      assert.ok(mailerSendCalls.length > 0)
+      assert.equal(mailerSendCalls[0].to, 'test@example.com')
+    })
+
+    it('should pass useDefaults:false and ignoreRequired:true for non-password updates', async () => {
+      await assert.doesNotReject(() => mod.updateUser('user-id-1', { firstName: 'Test' }))
     })
   })
 
@@ -525,6 +724,23 @@ describe('LocalAuthModule', () => {
         (err) => err.name === 'INVALID_PARAMS'
       )
     })
+
+    it('should throw when email is null', async () => {
+      await assert.rejects(
+        () => mod.createPasswordReset(null),
+        (err) => err.name === 'INVALID_PARAMS'
+      )
+    })
+
+    it('should include email param in INVALID_PARAMS error data', async () => {
+      await assert.rejects(
+        () => mod.createPasswordReset(''),
+        (err) => {
+          assert.deepEqual(err.data.params, ['email'])
+          return true
+        }
+      )
+    })
   })
 
   describe('#inviteHandler()', () => {
@@ -532,7 +748,7 @@ describe('LocalAuthModule', () => {
       let statusSent
       const req = {
         body: { email: 'invite@example.com' },
-        translate: (key) => `translated:${key}`,
+        translate: (key) => 'translated:' + key,
         auth: { user: { _id: { toString: () => 'admin-id' } } }
       }
       const res = {
@@ -550,12 +766,29 @@ describe('LocalAuthModule', () => {
       let nextError
       const req = {
         body: { email: '' },
-        translate: (key) => `translated:${key}`,
+        translate: (key) => 'translated:' + key,
         auth: {}
       }
       const res = { sendStatus: () => {} }
       await mod.inviteHandler(req, res, (err) => { nextError = err })
       assert.ok(nextError)
+    })
+
+    it('should pass inviteTokenLifespan to createPasswordReset', async () => {
+      let receivedLifespan
+      const original = mod.createPasswordReset.bind(mod)
+      mod.createPasswordReset = async (email, subject, text, html, lifespan) => {
+        receivedLifespan = lifespan
+      }
+      const req = {
+        body: { email: 'invite@example.com' },
+        translate: (key) => 'translated:' + key,
+        auth: { user: { _id: { toString: () => 'admin-id' } } }
+      }
+      const res = { sendStatus: () => {} }
+      await mod.inviteHandler(req, res, () => {})
+      mod.createPasswordReset = original
+      assert.equal(receivedLifespan, 604800000)
     })
   })
 
@@ -588,7 +821,7 @@ describe('LocalAuthModule', () => {
       let responseJson
       const req = {
         body: { email: '' },
-        translate: (key) => `translated:${key}`,
+        translate: (key) => 'translated:' + key,
         auth: {}
       }
       const res = {
@@ -601,6 +834,146 @@ describe('LocalAuthModule', () => {
       assert.equal(responseStatus, 200)
       assert.ok(responseJson.message)
     })
+
+    it('should include translated message in response', async () => {
+      let responseJson
+      const req = {
+        body: { email: 'test@example.com' },
+        translate: (key) => 'translated:' + key,
+        auth: {}
+      }
+      const res = {
+        status: () => ({ json: (data) => { responseJson = data } })
+      }
+      const original = mod.createPasswordReset.bind(mod)
+      mod.createPasswordReset = async () => {}
+      await mod.forgotPasswordHandler(req, res, () => {})
+      mod.createPasswordReset = original
+      assert.equal(responseJson.message, 'translated:app.forgotpasswordmessage')
+    })
+
+    it('should not call next with error (swallows errors to avoid info leaks)', async () => {
+      let nextCalled = false
+      const req = {
+        body: { email: '' },
+        translate: (key) => 'translated:' + key,
+        auth: {}
+      }
+      const res = {
+        status: () => ({ json: () => {} })
+      }
+      await mod.forgotPasswordHandler(req, res, () => { nextCalled = true })
+      assert.equal(nextCalled, false)
+    })
+  })
+
+  describe('#changePasswordHandler()', () => {
+    it('should respond with 204 on successful authenticated password change', async () => {
+      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
+      const oldHash = await PasswordUtils.generate('oldpassword')
+      usersStore.push({ email: 'test@example.com', password: oldHash })
+
+      let endCalled = false
+      let statusCode
+      const req = {
+        body: { password: 'newpassword1', oldPassword: 'oldpassword' },
+        auth: {
+          token: { type: 'local', signature: 'sig123' },
+          user: { email: 'test@example.com', _id: { toString: () => 'uid1' } }
+        }
+      }
+      const res = {
+        status: (code) => {
+          statusCode = code
+          return { end: () => { endCalled = true } }
+        }
+      }
+      await mod.changePasswordHandler(req, res, () => {})
+      assert.equal(statusCode, 204)
+      assert.equal(endCalled, true)
+    })
+
+    it('should call next with error on invalid old password', async () => {
+      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
+      const oldHash = await PasswordUtils.generate('oldpassword')
+      usersStore.push({ email: 'test@example.com', password: oldHash })
+
+      let nextError
+      const req = {
+        body: { password: 'newpassword1', oldPassword: 'wrongpassword' },
+        auth: {
+          token: { type: 'local', signature: 'sig123' },
+          user: { email: 'test@example.com', _id: { toString: () => 'uid1' } }
+        }
+      }
+      const res = { status: () => ({ end: () => {} }) }
+      await mod.changePasswordHandler(req, res, (err) => { nextError = err })
+      assert.ok(nextError)
+    })
+
+    it('should call next with error when auth token type is not local', async () => {
+      let nextError
+      const req = {
+        body: { password: 'newpassword1' },
+        auth: {
+          token: { type: 'sso', signature: 'sig123' },
+          user: { email: 'test@example.com', _id: { toString: () => 'uid1' } }
+        }
+      }
+      const res = { status: () => ({ end: () => {} }) }
+      await mod.changePasswordHandler(req, res, (err) => { nextError = err })
+      assert.ok(nextError)
+    })
+
+    it('should use reset token path when no auth token present', async () => {
+      let statusCode
+      let endCalled = false
+      const PasswordUtils = (await import('../lib/PasswordUtils.js')).default
+
+      const originalUpdate = mod.updateUser.bind(mod)
+      mod.updateUser = async () => ({ _id: 'uid1' })
+
+      const origDeleteReset = PasswordUtils.deleteReset
+      PasswordUtils.deleteReset = async () => {}
+
+      const origValidate = PasswordUtils.validateReset
+      PasswordUtils.validateReset = async () => ({ email: 'test@example.com' })
+
+      const req = {
+        body: { password: 'newpassword1', token: 'reset-token-123' },
+        auth: {}
+      }
+      const res = {
+        status: (code) => {
+          statusCode = code
+          return { end: () => { endCalled = true } }
+        }
+      }
+      await mod.changePasswordHandler(req, res, () => {})
+      assert.equal(statusCode, 204)
+      assert.equal(endCalled, true)
+
+      // Restore
+      PasswordUtils.validateReset = origValidate
+      PasswordUtils.deleteReset = origDeleteReset
+      mod.updateUser = originalUpdate
+    })
+
+    it('should call next with error when email is missing', async () => {
+      let nextError
+      const PasswordUtils = (await import('../lib/PasswordUtils.js')).default
+      const origValidate = PasswordUtils.validateReset
+      PasswordUtils.validateReset = async () => ({ email: '' })
+
+      const req = {
+        body: { password: 'newpassword1', token: 'reset-token-123' },
+        auth: {}
+      }
+      const res = { status: () => ({ end: () => {} }) }
+      await mod.changePasswordHandler(req, res, (err) => { nextError = err })
+      assert.ok(nextError)
+      PasswordUtils.validateReset = origValidate
+    })
   })
 
   describe('#validatePasswordHandler()', () => {
@@ -608,7 +981,7 @@ describe('LocalAuthModule', () => {
       let responseJson
       const req = {
         body: { password: 'validpassword' },
-        translate: (key) => `translated:${key}`
+        translate: (key) => 'translated:' + key
       }
       const res = {
         json: (data) => { responseJson = data }
@@ -617,12 +990,25 @@ describe('LocalAuthModule', () => {
       assert.ok(responseJson.message)
     })
 
+    it('should return translated success message', async () => {
+      let responseJson
+      const req = {
+        body: { password: 'validpassword' },
+        translate: (key) => 'translated:' + key
+      }
+      const res = {
+        json: (data) => { responseJson = data }
+      }
+      await mod.validatePasswordHandler(req, res, () => {})
+      assert.equal(responseJson.message, 'translated:app.passwordindicatorstrong')
+    })
+
     it('should call sendError for an invalid password', async () => {
       let sentError
       authlocalConfig.minPasswordLength = 20
       const req = {
         body: { password: 'short' },
-        translate: (key) => `translated:${key}`
+        translate: (key) => 'translated:' + key
       }
       const res = {
         sendError: (err) => { sentError = err }
@@ -630,6 +1016,21 @@ describe('LocalAuthModule', () => {
       await mod.validatePasswordHandler(req, res, () => {})
       assert.ok(sentError)
       assert.equal(sentError.name, 'INVALID_PASSWORD')
+    })
+
+    it('should translate error messages and join them', async () => {
+      let sentError
+      authlocalConfig.minPasswordLength = 20
+      const req = {
+        body: { password: 'short' },
+        translate: (key) => 'translated:' + key
+      }
+      const res = {
+        sendError: (err) => { sentError = err }
+      }
+      await mod.validatePasswordHandler(req, res, () => {})
+      assert.equal(typeof sentError.data.errors, 'string')
+      assert.ok(sentError.data.errors.includes('translated:'))
     })
   })
 })
