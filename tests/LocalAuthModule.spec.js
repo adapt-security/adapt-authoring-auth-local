@@ -122,6 +122,12 @@ mock.module('adapt-authoring-auth', {
 
       getConfig (key) { return authlocalConfig[key] }
 
+      async setValues () {
+        this.type = undefined
+        this.routes = undefined
+        this.userSchema = 'user'
+      }
+
       async init () {}
 
       async register (data) { return { _id: 'new-user-id', ...data } }
@@ -215,110 +221,22 @@ describe('LocalAuthModule', () => {
       assert.equal(instance.userSchema, 'localauthuser')
     })
 
-    it('should set type to local', async () => {
+    it('should call super.setValues()', async () => {
       const instance = new LocalAuthModule()
       await instance.setValues()
-      assert.equal(instance.type, 'local')
-    })
-
-    it('should define 5 routes', async () => {
-      const instance = new LocalAuthModule()
-      await instance.setValues()
-      assert.equal(instance.routes.length, 5)
-    })
-
-    it('should include the expected route paths', async () => {
-      const instance = new LocalAuthModule()
-      await instance.setValues()
-      const paths = instance.routes.map(r => r.route)
-      assert.deepEqual(paths, ['/invite', '/registersuper', '/changepass', '/forgotpass', '/validatepass'])
-    })
-
-    it('should mark registersuper as internal', async () => {
-      const instance = new LocalAuthModule()
-      await instance.setValues()
-      const superRoute = instance.routes.find(r => r.route === '/registersuper')
-      assert.equal(superRoute.internal, true)
-    })
-
-    it('should define post handlers for all routes', async () => {
-      const instance = new LocalAuthModule()
-      await instance.setValues()
-      for (const route of instance.routes) {
-        assert.equal(typeof route.handlers.post, 'function')
-      }
-    })
-
-    it('should define meta for all routes', async () => {
-      const instance = new LocalAuthModule()
-      await instance.setValues()
-      for (const route of instance.routes) {
-        assert.ok(route.meta)
-      }
+      // super.setValues() initialises type and routes to undefined;
+      // in production, loadRouteConfig fills them from routes.json
+      assert.equal(instance.type, undefined)
+      assert.equal(instance.routes, undefined)
     })
   })
 
   describe('#init()', () => {
-    it('should secure the invite route', async () => {
-      const instance = new LocalAuthModule()
-      instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.setValues()
-      await instance.init()
-      assert.ok(secureRouteCalls.some(c => c[0] === '/invite' && c[1] === 'post'))
-    })
-
-    it('should secure the validatepass route with read:me permission', async () => {
-      const instance = new LocalAuthModule()
-      instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.setValues()
-      await instance.init()
-      const call = secureRouteCalls.find(c => c[0] === '/validatepass')
-      assert.ok(call)
-      assert.deepEqual(call[2], ['read:me'])
-    })
-
-    it('should secure the invite route with register:users permission', async () => {
-      const instance = new LocalAuthModule()
-      instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.setValues()
-      await instance.init()
-      const call = secureRouteCalls.find(c => c[0] === '/invite')
-      assert.ok(call)
-      assert.deepEqual(call[2], ['register:users'])
-    })
-
-    it('should unsecure registersuper, changepass, and forgotpass routes', async () => {
-      const instance = new LocalAuthModule()
-      instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.setValues()
-      await instance.init()
-      const unsecuredPaths = unsecureRouteCalls.map(c => c[0])
-      assert.ok(unsecuredPaths.includes('/registersuper'))
-      assert.ok(unsecuredPaths.includes('/changepass'))
-      assert.ok(unsecuredPaths.includes('/forgotpass'))
-    })
-
     it('should set the users property', async () => {
       const instance = new LocalAuthModule()
       instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.setValues()
       await instance.init()
       assert.equal(instance.users, mockUsers)
-    })
-
-    it('should set meta on root and register routes', async () => {
-      const instance = new LocalAuthModule()
-      instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.setValues()
-      await instance.init()
-      assert.ok(instance.router.routes.find(r => r.route === '/').meta)
-      assert.ok(instance.router.routes.find(r => r.route === '/register').meta)
     })
   })
 
