@@ -22,7 +22,7 @@
     "adapt-authoring-mailer": "^1.0.2",
     "adapt-authoring-mongodb": "^3.0.0",
     "adapt-authoring-roles": "^1.1.3",
-    "adapt-authoring-server": "^2.0.0",
+    "adapt-authoring-server": "^2.1.0",
     "adapt-authoring-users": "^1.0.2"
   },
   "devDependencies": {
