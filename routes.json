@@ -2,6 +2,71 @@
   "type": "local",
   "routes": [
     {
+      "route": "/",
+      "override": true,
+      "handlers": { "post": "authenticateHandler" },
+      "meta": {
+        "post": {
+          "summary": "Authenticate with the API",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "email": { "type": "string", "required": true },
+                    "password": { "type": "string", "required": true },
+                    "persistSession": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "responses": { "204": {} }
+        }
+      }
+    },
+    {
+      "route": "/register",
+      "override": true,
+      "handlers": { "post": "registerHandler" },
+      "meta": {
+        "post": {
+          "summary": "Register a new user",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "email": { "type": "string", "required": true },
+                    "firstName": { "type": "string", "required": true },
+                    "lastName": { "type": "string", "required": true },
+                    "password": { "type": "string", "required": true },
+                    "roles": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#components/schemas/localauthuser" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "route": "/invite",
       "handlers": { "post": "inviteHandler" },
       "permissions": { "post": ["register:users"] },

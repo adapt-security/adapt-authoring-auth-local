@@ -235,18 +235,8 @@ describe('LocalAuthModule', () => {
     it('should set the users property', async () => {
       const instance = new LocalAuthModule()
       instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
       await instance.init()
       assert.equal(instance.users, mockUsers)
-    })
-
-    it('should set meta on root and register routes', async () => {
-      const instance = new LocalAuthModule()
-      instance.app = mockApp
-      instance.router = { routes: [{ route: '/', meta: null }, { route: '/register', meta: null }] }
-      await instance.init()
-      assert.ok(instance.router.routes.find(r => r.route === '/').meta)
-      assert.ok(instance.router.routes.find(r => r.route === '/register').meta)
     })
   })
 
