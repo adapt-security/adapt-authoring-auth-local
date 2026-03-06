@@ -72,6 +72,11 @@ const mockMongodb = {
 const mockUsers = {
   find: async (query) => {
     return mockUsersStore.filter(u => u.email === query.email)
+  },
+  findOne: async (query) => {
+    const result = mockUsersStore.find(u => u.email === query.email)
+    if (!result) throw mockErrors.NOT_FOUND.setData({ id: query.email, type: 'user' })
+    return result
   }
 }
 

@@ -51,6 +51,13 @@ const mockUsers = {
   find: async (query) => usersStore.filter(u => {
     return Object.entries(query).every(([k, v]) => JSON.stringify(u[k]) === JSON.stringify(v))
   }),
+  findOne: async (query) => {
+    const result = usersStore.find(u => {
+      return Object.entries(query).every(([k, v]) => JSON.stringify(u[k]) === JSON.stringify(v))
+    })
+    if (!result) throw mockErrors.NOT_FOUND.setData({ type: 'user' })
+    return result
+  },
   update: async (query, data) => {
     updateCalls.push({ query, data })
     return { ...query, ...data }
@@ -59,7 +66,8 @@ const mockUsers = {
 }
 
 const mockRoles = {
-  find: async () => [{ _id: 'role-super-id', shortName: 'superuser' }]
+  find: async () => [{ _id: 'role-super-id', shortName: 'superuser' }],
+  findOne: async () => ({ _id: 'role-super-id', shortName: 'superuser' })
 }
 
 const mockMailer = {
@@ -241,6 +249,25 @@ describe('LocalAuthModule', () => {
   })
 
   describe('#authenticate()', () => {
+    let correctHash
+
+    before(async () => {
+      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
+      correctHash = await PasswordUtils.generate('correctpass')
+    })
+
+    function createMockUser (overrides = {}) {
+      return {
+        _id: 'user-1',
+        password: correctHash,
+        isPermLocked: false,
+        isTempLocked: false,
+        failedLoginAttempts: 0,
+        lastFailedLoginAttempt: null,
+        ...overrides
+      }
+    }
+
     it('should throw when password is not provided in request body', async () => {
       const req = { body: {} }
       await assert.rejects(
@@ -250,16 +277,7 @@ describe('LocalAuthModule', () => {
     })
 
     it('should reset failed attempts on successful authentication', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
-        isTempLocked: false,
-        failedLoginAttempts: 2,
-        lastFailedLoginAttempt: null
-      }
+      const user = createMockUser({ failedLoginAttempts: 2 })
       const req = { body: { password: 'correctpass' } }
       await mod.authenticate(user, req, {})
       const lastUpdate = updateCalls[updateCalls.length - 1]
@@ -267,16 +285,7 @@ describe('LocalAuthModule', () => {
     })
 
     it('should increment failed attempts on wrong password', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
-        isTempLocked: false,
-        failedLoginAttempts: 0,
-        lastFailedLoginAttempt: null
-      }
+      const user = createMockUser()
       const req = { body: { password: 'wrongpass' } }
       await assert.rejects(() => mod.authenticate(user, req, {}))
       const lastUpdate = updateCalls[updateCalls.length - 1]
@@ -284,16 +293,7 @@ describe('LocalAuthModule', () => {
     })
 
     it('should set lastFailedLoginAttempt on wrong password', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
-        isTempLocked: false,
-        failedLoginAttempts: 0,
-        lastFailedLoginAttempt: null
-      }
+      const user = createMockUser()
       const req = { body: { password: 'wrongpass' } }
       await assert.rejects(() => mod.authenticate(user, req, {}))
       const lastUpdate = updateCalls[updateCalls.length - 1]
@@ -302,16 +302,7 @@ describe('LocalAuthModule', () => {
     })
 
     it('should temporarily lock after reaching failsUntilTemporaryLock threshold', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
-        isTempLocked: false,
-        failedLoginAttempts: 4, // one more will be 5 (the threshold)
-        lastFailedLoginAttempt: null
-      }
+      const user = createMockUser({ failedLoginAttempts: 4 })
       const req = { body: { password: 'wrongpass' } }
       await assert.rejects(
         () => mod.authenticate(user, req, {}),
@@ -322,16 +313,7 @@ describe('LocalAuthModule', () => {
     })
 
     it('should permanently lock after reaching failsUntilPermanentLock threshold', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
-        isTempLocked: false,
-        failedLoginAttempts: 19, // one more will be 20 (the threshold)
-        lastFailedLoginAttempt: null
-      }
+      const user = createMockUser({ failedLoginAttempts: 19 })
       const req = { body: { password: 'wrongpass' } }
       await assert.rejects(
         () => mod.authenticate(user, req, {}),
@@ -342,16 +324,11 @@ describe('LocalAuthModule', () => {
     })
 
     it('should throw ACCOUNT_LOCKED_PERM when user is already permanently locked', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
+      const user = createMockUser({
         isPermLocked: true,
-        isTempLocked: false,
         failedLoginAttempts: 20,
         lastFailedLoginAttempt: new Date().toISOString()
-      }
+      })
       const req = { body: { password: 'correctpass' } }
       await assert.rejects(
         () => mod.authenticate(user, req, {}),
@@ -360,16 +337,11 @@ describe('LocalAuthModule', () => {
     })
 
     it('should not increment failed attempts when account is permanently locked', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
+      const user = createMockUser({
         isPermLocked: true,
-        isTempLocked: false,
         failedLoginAttempts: 20,
         lastFailedLoginAttempt: new Date().toISOString()
-      }
+      })
       const req = { body: { password: 'wrongpass' } }
       await assert.rejects(() => mod.authenticate(user, req, {}))
       const lastUpdate = updateCalls[updateCalls.length - 1]
@@ -377,16 +349,11 @@ describe('LocalAuthModule', () => {
     })
 
     it('should not increment failed attempts during temp lock timeout', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
+      const user = createMockUser({
         isTempLocked: true,
         failedLoginAttempts: 5,
         lastFailedLoginAttempt: new Date().toISOString()
-      }
+      })
       const req = { body: { password: 'wrongpass' } }
       await assert.rejects(() => mod.authenticate(user, req, {}))
       const lastUpdate = updateCalls[updateCalls.length - 1]
@@ -394,16 +361,7 @@ describe('LocalAuthModule', () => {
     })
 
     it('should clear lastFailedLoginAttempt on successful login', async () => {
-      const { default: PasswordUtils } = await import('../lib/PasswordUtils.js')
-      const hash = await PasswordUtils.generate('correctpass')
-      const user = {
-        _id: 'user-1',
-        password: hash,
-        isPermLocked: false,
-        isTempLocked: false,
-        failedLoginAttempts: 0,
-        lastFailedLoginAttempt: null
-      }
+      const user = createMockUser()
       const req = { body: { password: 'correctpass' } }
       await mod.authenticate(user, req, {})
       const lastUpdate = updateCalls[updateCalls.length - 1]
