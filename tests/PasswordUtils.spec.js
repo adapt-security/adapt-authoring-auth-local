@@ -43,7 +43,7 @@ const mockAuthlocal = {
 
 const mockJsonschema = {
   getSchema: async () => ({
-    validate: async () => true
+    validate: () => true
   })
 }
 
