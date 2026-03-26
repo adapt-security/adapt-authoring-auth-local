@@ -91,7 +91,7 @@ const mockMongodb = {
 
 const mockJsonschema = {
   getSchema: async () => ({
-    validate: async () => true
+    validate: () => true
   })
 }
 
