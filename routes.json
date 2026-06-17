@@ -141,6 +141,7 @@
                   "type": "object",
                   "properties": {
                     "email": { "type": "string" },
+                    "oldPassword": { "type": "string" },
                     "password": { "type": "string" },
                     "token": { "type": "string" }
                   }
