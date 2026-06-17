@@ -35,6 +35,11 @@
       "isTimeMs": true,
       "default": "7d"
     },
+    "resetUrl": {
+      "description": "Reset link path appended to the server root URL, matching the UI's reset route. Supports {{token}} and {{email}}.",
+      "type": "string",
+      "default": "#user/reset?token={{token}}&email={{email}}"
+    },
     "minPasswordLength": {
       "description": "Minimum password length",
       "type": "number",
