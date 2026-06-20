@@ -46,6 +46,7 @@ let disavowCalls = []
 let secureRouteCalls = []
 let unsecureRouteCalls = []
 let mailerSendCalls = []
+let mailerSendTemplatedCalls = []
 
 const mockUsers = {
   find: async (query) => usersStore.filter(u => {
@@ -72,7 +73,8 @@ const mockRoles = {
 
 const mockMailer = {
   isEnabled: true,
-  send: async (opts) => { mailerSendCalls.push(opts) }
+  send: async (opts) => { mailerSendCalls.push(opts) },
+  sendTemplated: async (opts) => { mailerSendTemplatedCalls.push(opts) }
 }
 
 const mockServer = {
@@ -114,6 +116,7 @@ const mockApp = {
     if (names.length === 1) return moduleMap[names[0]]
     return names.map(n => moduleMap[n])
   },
+  config: { get: () => 'Adapt' },
   lang: {
     translate: (_, key) => 'translated:' + key
   }
@@ -570,14 +573,49 @@ describe('LocalAuthModule', () => {
     })
 
     it('should send email notification after password update when mailer is enabled', async () => {
-      mailerSendCalls = []
+      mailerSendTemplatedCalls = []
       await mod.updateUser('user-id-1', { password: 'newpassword' })
-      assert.ok(mailerSendCalls.length > 0)
-      assert.equal(mailerSendCalls[0].to, 'test@example.com')
+      assert.ok(mailerSendTemplatedCalls.length > 0)
+      assert.equal(mailerSendTemplatedCalls[0].to, 'test@example.com')
+    })
+
+    it('should send a templated password-updated email (check emblem, no button)', async () => {
+      mailerSendTemplatedCalls = []
+      await mod.updateUser('user-id-1', { password: 'newpassword' })
+      const sent = mailerSendTemplatedCalls[0]
+      assert.equal(sent.content.emblem, 'check')
+      assert.ok(sent.subject)
+      assert.ok(sent.content.title)
+      assert.equal(sent.content.button, undefined)
     })
 
     it('should pass useDefaults:false and ignoreRequired:true for non-password updates', async () => {
       await assert.doesNotReject(() => mod.updateUser('user-id-1', { firstName: 'Test' }))
+    })
+  })
+
+  describe('#sendInvite()', () => {
+    it('should build invite content (spark emblem + set-password button) for createPasswordReset', async () => {
+      let captured
+      const original = mod.createPasswordReset.bind(mod)
+      mod.createPasswordReset = async (email, message) => { captured = { email, message } }
+      await mod.sendInvite('invite@example.com')
+      mod.createPasswordReset = original
+      assert.equal(captured.email, 'invite@example.com')
+      assert.equal(captured.message.content.emblem, 'spark')
+      assert.ok(captured.message.subject)
+      assert.ok(captured.message.content.button.label)
+    })
+
+    it('should be a no-op when the mailer is disabled', async () => {
+      mockMailer.isEnabled = false
+      let called = false
+      const original = mod.createPasswordReset.bind(mod)
+      mod.createPasswordReset = async () => { called = true }
+      await mod.sendInvite('invite@example.com')
+      mod.createPasswordReset = original
+      mockMailer.isEnabled = true
+      assert.equal(called, false)
     })
   })
 
@@ -648,7 +686,7 @@ describe('LocalAuthModule', () => {
     it('should pass inviteTokenLifespan to createPasswordReset', async () => {
       let receivedLifespan
       const original = mod.createPasswordReset.bind(mod)
-      mod.createPasswordReset = async (email, subject, text, html, lifespan) => {
+      mod.createPasswordReset = async (email, message, lifespan) => {
         receivedLifespan = lifespan
       }
       const req = {
